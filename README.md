@@ -30,6 +30,10 @@ Sama dengan gateway sebelumnya.
 
 ## Jalankan
 
+Devcontainer sama dengan ekosistem ChatGPT terakhir: `postCreate` pasang Camoufox, `postStart` menjalankan gateway. Yang dicek `platforms/muse.js` dan `cookie_pool.js`, bukan `chatgpt.js`.
+
+Browser tanpa proxy (`FORCE_DIRECT=1`, default). Cheap Proxy hanya jika `FORCE_DIRECT=0`.
+
 ```
 cp .env.example .env
 npm install
