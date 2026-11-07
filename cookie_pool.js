@@ -91,10 +91,7 @@ async function checkOnce(item) {
         await muse.persiapkanHalaman(page, folder, { cookieId: item.id, skipShots: true });
         return true;
     } catch (e) {
-        if (page && folder) {
-            const shot = path.join(folder, `cek_fail_${item.index}_${Date.now()}.png`);
-            await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-        }
+        if (page && folder) await muse.simpanJejakGagal(page, folder);
         throw e;
     } finally {
         if (page) await page.close().catch(() => {});

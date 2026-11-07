@@ -153,22 +153,50 @@ async function persiapkanHalaman(page, folderHasil, options = {}) {
 
 async function uploadFiles(page, files) {
     if (!files.length) return;
-    const sebelum = await page.evaluate(() => document.querySelectorAll('[data-hatch-media-protection-border]').length);
-    const input = page.locator('input[type="file"]').first();
-    await input.waitFor({ state: 'attached', timeout: 20000 });
-    await input.setInputFiles(files);
-    const batas = Date.now() + 45000;
-    while (Date.now() < batas) {
-        const ok = await page.evaluate((awal) => {
-            const hapus = !!document.querySelector('button[aria-label="Remove attachment"]');
-            const media = document.querySelectorAll('[data-hatch-media-protection-border]').length;
-            return hapus || media > awal;
-        }, sebelum);
-        if (ok) {
-            console.log(`[MUSE] lampiran nempel ${files.length}`);
-            return;
+    const root = page.locator('[data-hatch-composer-root="true"]').first();
+    await root.waitFor({ state: 'visible', timeout: 20000 });
+    const input = root.locator('input[type="file"]').first();
+    const jumlahInput = await page.locator('input[type="file"]').count();
+    console.log(`[MUSE] input file di halaman=${jumlahInput}`);
+
+    const sebelum = await root.evaluate((el) => el.querySelectorAll('img, [data-hatch-media-protection-border]').length);
+    const nempel = () => root.evaluate((el, awal) => {
+        const blob = Array.from(el.querySelectorAll('img')).some((img) => String(img.currentSrc || img.src || '').startsWith('blob:'));
+        const sekarang = el.querySelectorAll('img, [data-hatch-media-protection-border]').length;
+        return blob || sekarang > awal;
+    }, sebelum);
+
+    const tungguNempel = async (ms, cara) => {
+        const batas = Date.now() + ms;
+        while (Date.now() < batas) {
+            if (await nempel()) {
+                console.log(`[MUSE] lampiran nempel ${files.length} cara=${cara}`);
+                return true;
+            }
+            await page.waitForTimeout(400);
         }
-        await page.waitForTimeout(400);
+        return false;
+    };
+
+    let cara = 'filechooser';
+    try {
+        const chooserPromise = page.waitForEvent('filechooser', { timeout: 8000 });
+        await root.locator('button').first().click({ timeout: 5000 });
+        const chooser = await chooserPromise;
+        await chooser.setFiles(files);
+    } catch (e) {
+        cara = 'setInputFiles';
+        console.log(`[MUSE] filechooser tidak muncul: ${e.message}`);
+        await input.waitFor({ state: 'attached', timeout: 10000 });
+        await input.setInputFiles(files);
+    }
+    if (await tungguNempel(20000, cara)) return;
+
+    if (cara !== 'setInputFiles') {
+        cara = 'setInputFiles';
+        await input.waitFor({ state: 'attached', timeout: 10000 });
+        await input.setInputFiles(files);
+        if (await tungguNempel(15000, cara)) return;
     }
     throw new Error('UPLOAD_GAGAL: lampiran tidak muncul di composer');
 }
@@ -243,11 +271,20 @@ async function simpanGambar(page, context, url, dest) {
     await sedotNative(url, dest, context);
 }
 
-async function shotGagal(page, folderHasil) {
+async function simpanJejakGagal(page, folderHasil) {
     if (!page || !folderHasil) return;
-    const fp = path.join(folderHasil, `fail_muse_${Date.now()}.png`);
-    await page.screenshot({ path: fp, fullPage: true }).catch(() => {});
-    console.log(`[MUSE] screenshot gagal ${path.basename(fp)}`);
+    const stamp = Date.now();
+    const png = path.join(folderHasil, `fail_muse_${stamp}.png`);
+    const html = path.join(folderHasil, `fail_muse_${stamp}.html`);
+    await page.screenshot({ path: png, fullPage: true }).catch(() => {});
+    try {
+        const url = page.url();
+        const body = await page.content();
+        fs.writeFileSync(html, `<!-- url=${url} -->\n${body}`);
+        console.log(`[MUSE] jejak gagal ${path.basename(png)} ${path.basename(html)} url=${url}`);
+    } catch (e) {
+        console.log(`[MUSE] screenshot gagal ${path.basename(png)} html tidak tersimpan: ${e.message}`);
+    }
 }
 
 async function eksekusiMuse(tipeTugas, promptTeks, isThinkingMode, fileInputData, folderHasil, context, options = {}) {
@@ -279,7 +316,7 @@ async function eksekusiMuse(tipeTugas, promptTeks, isThinkingMode, fileInputData
         if (!saved.length) throw new Error('UNDUH_GAGAL: gambar Muse tidak tersimpan');
         return { text: '', files: saved };
     } catch (e) {
-        await shotGagal(page, folderHasil);
+        await simpanJejakGagal(page, folderHasil);
         throw e;
     } finally {
         await page.close().catch(() => {});
@@ -290,5 +327,6 @@ module.exports = {
     eksekusiMuse,
     persiapkanHalaman,
     normalisasiCookies,
+    simpanJejakGagal,
     THREAD_NEW,
 };

@@ -307,7 +307,7 @@ function jawabJob(req, res) {
 app.get('/api/failures', (req, res) => {
     try {
         const files = fs.readdirSync(folderHasil)
-            .filter((f) => /^(fail_|error_trace_)/i.test(f) && /\.png$/i.test(f))
+            .filter((f) => /^(fail_|error_trace_|cek_fail_)/i.test(f) && /\.(png|html)$/i.test(f))
             .map((f) => {
                 const st = fs.statSync(path.join(folderHasil, f));
                 return { name: f, url: `/files/${f}`, mtime: st.mtimeMs, size: st.size };
@@ -362,6 +362,8 @@ app.post('/api/generate', async (req, res) => {
     const translatedFiles = [];
     let sesiDipakai = null;
     let timerTugas = null;
+    let cookieMati = false;
+    let sudahLepas = false;
     const hidup = { habis: false, browser: null, context: null };
     try {
         if (fileArray && fileArray.length > 0) {
@@ -399,8 +401,6 @@ app.post('/api/generate', async (req, res) => {
             if (hidup.browser) hidup.browser.close().catch(() => {});
         }, batasTugas);
         let sesi = null;
-        let cookieMati = false;
-        let sudahLepas = false;
         const sesiAmbil = await poolBrowser.takeNext(batasPada);
         sesi = sesiAmbil;
         sesiDipakai = sesi;
