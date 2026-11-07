@@ -1,5 +1,5 @@
 {
-  "name": "work-ekosistem-bot-gateway",
+  "name": "muse-gateway",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:22-bookworm",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
   "remoteUser": "node",

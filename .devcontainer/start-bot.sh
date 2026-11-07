@@ -55,7 +55,8 @@ echo "[start] --- gate ---"
 [[ -f bot_github.js ]] && ok "bot_github.js" || bad "bot_github.js missing in $ROOT"
 [[ -f gateway.js ]] && ok "gateway.js" || bad "gateway.js missing in $ROOT"
 [[ -f qstash_deadman.js ]] && ok "qstash_deadman.js" || bad "qstash_deadman.js missing"
-[[ -f platforms/chatgpt.js ]] && ok "platforms/chatgpt.js" || bad "platforms/chatgpt.js missing"
+[[ -f platforms/muse.js ]] && ok "platforms/muse.js" || bad "platforms/muse.js missing"
+[[ -f cookie_pool.js ]] && ok "cookie_pool.js" || bad "cookie_pool.js missing"
 [[ -f camoufox_launch.js ]] && ok "camoufox_launch.js" || bad "camoufox_launch.js missing"
 [[ -f .env ]] && ok ".env" || bad ".env missing in $ROOT"
 command -v node &>/dev/null && ok "node $(node -v)" || bad "node"
@@ -171,6 +172,7 @@ RUNEOF
 }
 
 echo "[start] ALL OK — detached launch (bot_github tidak dijalankan)"
+echo "[start] browser: FORCE_DIRECT default 1 = tanpa proxy (internet Codespace). FORCE_DIRECT=0 baru memakai Cheap Proxy."
 launch_one "gateway" "gateway.js"
 
 echo "[start] follow: tail -f $ROOT/gateway.log"
