@@ -155,66 +155,99 @@ async function uploadFiles(page, files) {
     if (!files.length) return;
     const root = page.locator('[data-hatch-composer-root="true"]').first();
     await root.waitFor({ state: 'visible', timeout: 20000 });
-    const input = root.locator('input[type="file"]').first();
-    const jumlahInput = await page.locator('input[type="file"]').count();
-    console.log(`[MUSE] input file di halaman=${jumlahInput}`);
+    await page.evaluate(() => {
+        document.querySelectorAll('input[type="file"]').forEach((input) => {
+            input.removeAttribute('accept');
+            input.removeAttribute('capture');
+        });
+    });
+    const inputs = await root.locator('input[type="file"]').all();
+    const cadangan = inputs.length ? inputs : await page.locator('input[type="file"]').all();
+    console.log(`[MUSE] input file di composer=${inputs.length} dipakai=${cadangan.length}`);
+    if (!cadangan.length) throw new Error('UPLOAD_GAGAL: input file tidak ada');
 
-    const sebelum = await root.evaluate((el) => el.querySelectorAll('img, [data-hatch-media-protection-border]').length);
-    const nempel = () => root.evaluate((el, awal) => {
-        const blob = Array.from(el.querySelectorAll('img')).some((img) => String(img.currentSrc || img.src || '').startsWith('blob:'));
-        const sekarang = el.querySelectorAll('img, [data-hatch-media-protection-border]').length;
-        return blob || sekarang > awal;
-    }, sebelum);
-
-    const tungguNempel = async (ms, cara) => {
-        const batas = Date.now() + ms;
-        while (Date.now() < batas) {
-            if (await nempel()) {
-                console.log(`[MUSE] lampiran nempel ${files.length} cara=${cara}`);
-                return true;
-            }
-            await page.waitForTimeout(400);
+    const awal = await root.evaluate((el) => ({
+        media: el.querySelectorAll('[data-hatch-media-protection-border]').length,
+        buttons: el.querySelectorAll('button').length,
+    }));
+    let terpasang = false;
+    for (const input of cadangan) {
+        try {
+            await input.setInputFiles(files);
+            terpasang = true;
+            break;
+        } catch (e) {
+            console.log(`[MUSE] setInputFiles gagal: ${e.message}`);
         }
-        return false;
-    };
-
-    let cara = 'filechooser';
-    try {
-        const chooserPromise = page.waitForEvent('filechooser', { timeout: 8000 });
-        await root.locator('button').first().click({ timeout: 5000 });
-        const chooser = await chooserPromise;
-        await chooser.setFiles(files);
-    } catch (e) {
-        cara = 'setInputFiles';
-        console.log(`[MUSE] filechooser tidak muncul: ${e.message}`);
-        await input.waitFor({ state: 'attached', timeout: 10000 });
-        await input.setInputFiles(files);
     }
-    if (await tungguNempel(20000, cara)) return;
+    if (!terpasang) throw new Error('UPLOAD_GAGAL: setInputFiles tidak masuk');
 
-    if (cara !== 'setInputFiles') {
-        cara = 'setInputFiles';
-        await input.waitFor({ state: 'attached', timeout: 10000 });
-        await input.setInputFiles(files);
-        if (await tungguNempel(15000, cara)) return;
+    const batas = Date.now() + 20000;
+    while (Date.now() < batas) {
+        const ok = await root.evaluate((el, sebelum) => {
+            const adaBlob = Array.from(el.querySelectorAll('img')).some((img) => /^(blob:|data:)/.test(String(img.currentSrc || img.src || '')));
+            const media = el.querySelectorAll('[data-hatch-media-protection-border]').length > sebelum.media;
+            const tombolBaru = el.querySelectorAll('button').length > sebelum.buttons;
+            return adaBlob || media || tombolBaru;
+        }, awal);
+        if (ok) {
+            console.log(`[MUSE] lampiran nempel ${files.length}`);
+            return;
+        }
+        await page.waitForTimeout(200);
     }
     throw new Error('UPLOAD_GAGAL: lampiran tidak muncul di composer');
 }
 
 async function isiPrompt(page, prompt) {
-    const box = page.locator('textarea').last();
+    const box = page.locator('[data-hatch-composer-root="true"] textarea, textarea').last();
     await box.waitFor({ state: 'visible', timeout: 20000 });
-    await box.click({ timeout: 5000 }).catch(() => {});
+    await box.focus();
     await box.fill(prompt);
+    await page.waitForTimeout(200);
 }
 
-async function klikKirim(page) {
-    const btn = page.locator('[data-hatch-composer-action="send"] button').first();
-    await btn.waitFor({ state: 'visible', timeout: 20000 });
-    const disabled = await btn.isDisabled().catch(() => false);
-    if (disabled) throw new Error('KIRIM_GAGAL: tombol kirim masih mati');
-    await btn.click();
-    console.log('[MUSE] terkirim');
+async function buktiTerkirim(page, prompt) {
+    return page.evaluate((teks) => {
+        const path = location.pathname || '';
+        const pindah = /\/thread\/(?!new$)[^/]+/.test(path);
+        const sibuk = !!document.querySelector('[data-testid="hatch-composer-stop-button"], [data-testid="hatch-chat-typing-indicator"], [data-hatch-composer-action="stop"]');
+        const root = document.querySelector('[data-hatch-composer-root="true"]') || document;
+        const ta = root.querySelector('textarea');
+        const isi = ta ? String(ta.value || '') : '';
+        const potong = teks ? String(teks).slice(0, 24) : '';
+        const draft = !!(potong && isi.includes(potong));
+        const lampiran = !!root.querySelector('[data-hatch-media-protection-border], img[src^="blob:"]');
+        return { pindah, sibuk, draft, lampiran, url: location.href };
+    }, prompt || '');
+}
+
+async function klikKirim(page, prompt) {
+    await page.waitForSelector('[data-pel-click="chat_send_message"], [data-hatch-composer-action="send"] button', { timeout: 15000 });
+    const box = page.locator('[data-hatch-composer-root="true"] textarea, textarea').last();
+    const urutan = ['enter', 'dom', 'enter'];
+    for (const cara of urutan) {
+        if (cara === 'enter') {
+            await box.focus().catch(() => {});
+            await box.press('Enter').catch((e) => console.log(`[MUSE] enter: ${e.message}`));
+        } else {
+            await page.evaluate(() => {
+                const b = document.querySelector('[data-pel-click="chat_send_message"]');
+                if (b) b.click();
+            });
+        }
+        const batas = Date.now() + 2500;
+        while (Date.now() < batas) {
+            const s = await buktiTerkirim(page, prompt);
+            if (s.pindah || s.sibuk || (!s.draft && !s.lampiran)) {
+                console.log(`[MUSE] terkirim cara=${cara} url=${s.url}`);
+                return;
+            }
+            await page.waitForTimeout(200);
+        }
+        console.log(`[MUSE] kirim ${cara} masih di composer`);
+    }
+    throw new Error('KIRIM_GAGAL: pesan masih di composer');
 }
 
 async function tungguGambar(page, timeoutMs) {
@@ -244,7 +277,7 @@ async function tungguGambar(page, timeoutMs) {
         if (pilih.length && !info.sibuk && (pernahSibuk || generated.length)) {
             return pilih.map((x) => x.src);
         }
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(400);
     }
     throw new Error('TIMEOUT: Muse tidak menghasilkan gambar');
 }
@@ -297,7 +330,7 @@ async function eksekusiMuse(tipeTugas, promptTeks, isThinkingMode, fileInputData
         console.log(`[MUSE] cookie=${(options && options.cookieId) || '-'} file=${files.length} prompt=${prompt ? 'ada' : 'kosong'}`);
         if (files.length) await uploadFiles(page, files);
         if (prompt) await isiPrompt(page, prompt);
-        await klikKirim(page);
+        await klikKirim(page, prompt);
         const urls = await tungguGambar(page, 4 * 60 * 1000);
         const saved = [];
         for (let i = 0; i < urls.length; i++) {
