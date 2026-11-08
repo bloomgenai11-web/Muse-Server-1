@@ -24,7 +24,7 @@ function maxCookies() {
 }
 
 function maxParallel() {
-    return deps.MAX_PARALLEL || parseInt(process.env.MAX_PARALLEL || '2', 10);
+    return deps.MAX_PARALLEL || parseInt(process.env.MAX_PARALLEL || '4', 10);
 }
 
 function listText() {
@@ -36,7 +36,7 @@ function snapshot() {
         bootDone,
         max: maxCookies(),
         list: memory.map((x) => x.index),
-        busy: memory.filter((x) => x.busy).map((x) => x.index),
+        busy: memory.filter((x) => x.pakai > 0).map((x) => `${x.index}x${x.pakai}`),
     };
 }
 
@@ -47,7 +47,7 @@ function formatItem(raw, index) {
         id: `cookie-muse-${index}`,
         index,
         cookies,
-        busy: false,
+        pakai: 0,
     };
 }
 
@@ -144,6 +144,11 @@ function aktif() {
     return typeof deps.getActive === 'function' ? deps.getActive() : 0;
 }
 
+function pilihCookie() {
+    if (!memory.length) return null;
+    return memory.slice().sort((a, b) => a.pakai - b.pakai || a.index - b.index)[0];
+}
+
 async function takeNext(deadlineMs) {
     const mulai = Date.now();
     let lastLog = 0;
@@ -155,38 +160,35 @@ async function takeNext(deadlineMs) {
             throw new Error('[CEK] tidak ada cookie Muse sehat di memori');
         }
         const slotPenuh = aktif() >= maxParallel();
-        if (!taking && bootDone && !slotPenuh) {
-            const item = memory.find((x) => !x.busy);
-            if (item) {
-                taking = true;
-                item.busy = true;
-                try {
-                    if (deps.reserveWorker) deps.reserveWorker();
-                } catch (e) {
-                    item.busy = false;
-                    taking = false;
-                    throw e;
-                }
+        if (!taking && bootDone && !slotPenuh && memory.length) {
+            const item = pilihCookie();
+            taking = true;
+            item.pakai += 1;
+            try {
+                if (deps.reserveWorker) deps.reserveWorker();
+            } catch (e) {
+                item.pakai = Math.max(0, item.pakai - 1);
                 taking = false;
-                console.log(`[CEK] pakai #${item.index} | sehat ${listText()}`);
-                return item;
+                throw e;
             }
+            taking = false;
+            console.log(`[CEK] pakai #${item.index} bersama=${item.pakai} | slot ${aktif()}/${maxParallel()} | sehat ${listText()}`);
+            return item;
         }
         const now = Date.now();
         if (now - lastLog > 8000) {
             lastLog = now;
             if (!bootDone) console.log('[CEK] masih cek cookie pertama kali — tugas menunggu');
-            else if (slotPenuh) console.log(`[CEK] ${aktif()} tugas sedang jalan — menunggu slot`);
-            else console.log('[CEK] semua cookie sedang dipakai — menunggu lepas');
+            else console.log(`[CEK] ${aktif()}/${maxParallel()} tugas sedang jalan — menunggu slot`);
         }
         await new Promise((r) => setTimeout(r, 400));
     }
-    throw new Error('[CEK] menunggu cookie sehat lebih dari 20 menit');
+    throw new Error('[CEK] menunggu slot lebih dari 20 menit');
 }
 
 function selesai(item, opts = {}) {
     if (item) {
-        item.busy = false;
+        item.pakai = Math.max(0, (item.pakai || 1) - 1);
         if (opts.mati) {
             memory = memory.filter((x) => x.index !== item.index);
             console.log(`[CEK] #${item.index} dibuang dari memori (${opts.alasan || 'tidak sehat'})`);
