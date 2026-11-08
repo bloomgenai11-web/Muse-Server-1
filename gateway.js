@@ -56,7 +56,7 @@ function ghHeaders(pat) {
 const SHIFTS_PER_PAT = parseInt(process.env.SHIFTS_PER_PAT || '24', 10);
 
 const MAX_COOKIES = parseInt(process.env.MAX_COOKIES || '10', 10);
-const MAX_PARALLEL = parseInt(process.env.MAX_PARALLEL || '2', 10);
+const MAX_PARALLEL = parseInt(process.env.MAX_PARALLEL || '4', 10);
 const PORT = 3001;
 const app = express();
 
@@ -307,7 +307,7 @@ function jawabJob(req, res) {
 app.get('/api/failures', (req, res) => {
     try {
         const files = fs.readdirSync(folderHasil)
-            .filter((f) => /^(fail_|error_trace_|cek_fail_)/i.test(f) && /\.(png|html)$/i.test(f))
+            .filter((f) => /^(fail_|error_trace_|cek_fail_|send_)/i.test(f) && /\.(png|html)$/i.test(f))
             .map((f) => {
                 const st = fs.statSync(path.join(folderHasil, f));
                 return { name: f, url: `/files/${f}`, mtime: st.mtimeMs, size: st.size };
