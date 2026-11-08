@@ -308,12 +308,22 @@ async function klikKirim(page, prompt, folderHasil) {
     throw new Error('KIRIM_GAGAL: pesan masih di composer');
 }
 
-async function tungguGambar(page, timeoutMs) {
+async function bacaErrorKirim(page) {
+    return page.evaluate(() => Array.from(document.querySelectorAll('[data-pel-impression="error_content_impression"]'))
+        .map((el) => (el.textContent || '').trim())
+        .filter(Boolean));
+}
+
+async function tungguGambar(page, timeoutMs, errorAwal) {
+    const awal = Array.isArray(errorAwal) ? errorAwal : [];
     const t0 = Date.now();
     let pernahSibuk = false;
     while (Date.now() - t0 < timeoutMs) {
         const info = await page.evaluate(() => {
             const sibuk = !!document.querySelector('[data-testid="hatch-composer-stop-button"], [data-testid="hatch-chat-typing-indicator"]');
+            const errors = Array.from(document.querySelectorAll('[data-pel-impression="error_content_impression"]'))
+                .map((el) => (el.textContent || '').trim())
+                .filter(Boolean);
             const nodes = Array.from(document.querySelectorAll('[data-testid="hatch-chat-attachment-presentation-image"]'));
             const images = [];
             for (const node of nodes) {
@@ -324,11 +334,15 @@ async function tungguGambar(page, timeoutMs) {
                 const label = (button && (button.getAttribute('aria-label') || button.getAttribute('title'))) || '';
                 if (!busy && src) images.push({ src, label });
             }
-            return { sibuk, images };
+            return { sibuk, images, errors };
         }).catch((e) => {
-            if (halamanPindah(e)) return { sibuk: true, images: [] };
+            if (halamanPindah(e)) return { sibuk: true, images: [], errors: [] };
             throw e;
         });
+        const baru = info.errors.filter((t) => !awal.includes(t));
+        if (baru.length || info.errors.length > awal.length) {
+            throw new Error(`KIRIM_TIDAK_SAMPAI: ${baru[0] || info.errors[info.errors.length - 1] || 'error'}`);
+        }
         if (info.sibuk) pernahSibuk = true;
         const generated = info.images.filter((x) => /generated image/i.test(x.label));
         const pilih = generated.length ? generated : info.images;
@@ -379,39 +393,50 @@ async function simpanJejakGagal(page, folderHasil) {
 }
 
 async function eksekusiMuse(tipeTugas, promptTeks, isThinkingMode, fileInputData, folderHasil, context, options = {}) {
-    const page = await context.newPage();
-    try {
-        await persiapkanHalaman(page, folderHasil, options);
-        const files = (fileInputData || []).filter((f) => f && fs.existsSync(f));
-        const prompt = String(promptTeks || '').trim();
-        if (!prompt && !files.length) throw new Error('PROMPT_KOSONG');
-        console.log(`[MUSE] cookie=${(options && options.cookieId) || '-'} file=${files.length} prompt=${prompt ? 'ada' : 'kosong'}`);
-        if (files.length) await uploadFiles(page, files);
-        if (prompt) await isiPrompt(page, prompt);
-        await klikKirim(page, prompt, folderHasil);
-        const urls = await tungguGambar(page, 4 * 60 * 1000);
-        const saved = [];
-        for (let i = 0; i < urls.length; i++) {
-            const name = namaHasil(options && options.jejak, i);
-            const dest = path.join(folderHasil, name);
-            try {
-                await simpanGambar(page, context, urls[i], dest);
-                if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
-                    saved.push(name);
-                    console.log(`[MUSE] tersimpan ${name} byte=${fs.statSync(dest).size}`);
+    const files = (fileInputData || []).filter((f) => f && fs.existsSync(f));
+    const prompt = String(promptTeks || '').trim();
+    if (!prompt && !files.length) throw new Error('PROMPT_KOSONG');
+    let terakhir = null;
+    for (let upaya = 1; upaya <= 3; upaya++) {
+        const page = await context.newPage();
+        try {
+            if (upaya > 1) console.log(`[MUSE] ulang dari awal ${upaya}/3 karena ${terakhir}`);
+            await persiapkanHalaman(page, folderHasil, options);
+            console.log(`[MUSE] cookie=${(options && options.cookieId) || '-'} file=${files.length} prompt=${prompt ? 'ada' : 'kosong'} upaya=${upaya}`);
+            if (files.length) await uploadFiles(page, files);
+            if (prompt) await isiPrompt(page, prompt);
+            const errorAwal = await bacaErrorKirim(page);
+            await klikKirim(page, prompt, folderHasil);
+            const urls = await tungguGambar(page, 4 * 60 * 1000, errorAwal);
+            const saved = [];
+            for (let i = 0; i < urls.length; i++) {
+                const name = namaHasil(options && options.jejak, i);
+                const dest = path.join(folderHasil, name);
+                try {
+                    await simpanGambar(page, context, urls[i], dest);
+                    if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+                        saved.push(name);
+                        console.log(`[MUSE] tersimpan ${name} byte=${fs.statSync(dest).size}`);
+                    }
+                } catch (e) {
+                    console.log(`[MUSE] gagal unduh gambar: ${e.message}`);
                 }
-            } catch (e) {
-                console.log(`[MUSE] gagal unduh gambar: ${e.message}`);
             }
+            if (!saved.length) throw new Error('UNDUH_GAGAL: gambar Muse tidak tersimpan');
+            return { text: '', files: saved };
+        } catch (e) {
+            terakhir = e.message;
+            const ulang = /KIRIM_TIDAK_SAMPAI|TIMEOUT: Muse tidak menghasilkan gambar/.test(e.message || '');
+            if (!ulang || upaya === 3) {
+                await simpanJejakGagal(page, folderHasil);
+                throw e;
+            }
+            console.log(`[MUSE] ${e.message} — ulang dari awal`);
+        } finally {
+            await page.close().catch(() => {});
         }
-        if (!saved.length) throw new Error('UNDUH_GAGAL: gambar Muse tidak tersimpan');
-        return { text: '', files: saved };
-    } catch (e) {
-        await simpanJejakGagal(page, folderHasil);
-        throw e;
-    } finally {
-        await page.close().catch(() => {});
     }
+    throw new Error(terakhir || 'TIMEOUT: Muse tidak menghasilkan gambar');
 }
 
 module.exports = {
