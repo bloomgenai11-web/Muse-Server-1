@@ -8,7 +8,7 @@
 const path = require('path');
 const muse = require('./platforms/muse');
 
-const WAIT_MS = 20 * 60 * 1000;
+const WAIT_MS = 10 * 60 * 1000;
 
 let deps = {};
 let folder = null;
@@ -16,6 +16,7 @@ let memory = [];
 let bootDone = false;
 let booting = false;
 let taking = false;
+let antre = 0;
 
 function setDeps(d) { deps = d || {}; }
 
@@ -24,7 +25,7 @@ function maxCookies() {
 }
 
 function maxParallel() {
-    return deps.MAX_PARALLEL || parseInt(process.env.MAX_PARALLEL || '4', 10);
+    return deps.MAX_PARALLEL || parseInt(process.env.MAX_PARALLEL || '6', 10);
 }
 
 function listText() {
@@ -152,38 +153,47 @@ function pilihCookie() {
 async function takeNext(deadlineMs) {
     const mulai = Date.now();
     let lastLog = 0;
-    while (Date.now() - mulai < WAIT_MS) {
-        if (deadlineMs && Date.now() >= deadlineMs) {
-            throw new Error('TIMEOUT_5MENIT: tugas belum selesai dalam 5 menit');
-        }
-        if (bootDone && memory.length === 0) {
-            throw new Error('[CEK] tidak ada cookie Muse sehat di memori');
-        }
-        const slotPenuh = aktif() >= maxParallel();
-        if (!taking && bootDone && !slotPenuh && memory.length) {
-            const item = pilihCookie();
-            taking = true;
-            item.pakai += 1;
-            try {
-                if (deps.reserveWorker) deps.reserveWorker();
-            } catch (e) {
-                item.pakai = Math.max(0, item.pakai - 1);
-                taking = false;
-                throw e;
+    let masukAntre = false;
+    try {
+        while (Date.now() - mulai < WAIT_MS) {
+            if (deadlineMs && Date.now() >= deadlineMs) {
+                throw new Error('TIMEOUT_5MENIT: tugas belum selesai dalam 5 menit');
             }
-            taking = false;
-            console.log(`[CEK] pakai #${item.index} bersama=${item.pakai} | slot ${aktif()}/${maxParallel()} | sehat ${listText()}`);
-            return item;
+            if (bootDone && memory.length === 0) {
+                throw new Error('[CEK] tidak ada cookie Muse sehat di memori');
+            }
+            const slotPenuh = aktif() >= maxParallel();
+            if (!taking && bootDone && !slotPenuh && memory.length) {
+                const item = pilihCookie();
+                taking = true;
+                item.pakai += 1;
+                try {
+                    if (deps.reserveWorker) deps.reserveWorker();
+                } catch (e) {
+                    item.pakai = Math.max(0, item.pakai - 1);
+                    taking = false;
+                    throw e;
+                }
+                taking = false;
+                console.log(`[CEK] pakai #${item.index} bersama=${item.pakai} | slot ${aktif()}/${maxParallel()} | antre ${antre} | sehat ${listText()}`);
+                return item;
+            }
+            if (!masukAntre) {
+                masukAntre = true;
+                antre += 1;
+            }
+            const now = Date.now();
+            if (now - lastLog > 8000) {
+                lastLog = now;
+                if (!bootDone) console.log(`[ANTRI] ${antre} tugas menunggu cek cookie selesai`);
+                else console.log(`[ANTRI] ${antre} tugas menunggu | slot ${aktif()}/${maxParallel()}`);
+            }
+            await new Promise((r) => setTimeout(r, 400));
         }
-        const now = Date.now();
-        if (now - lastLog > 8000) {
-            lastLog = now;
-            if (!bootDone) console.log('[CEK] masih cek cookie pertama kali — tugas menunggu');
-            else console.log(`[CEK] ${aktif()}/${maxParallel()} tugas sedang jalan — menunggu slot`);
-        }
-        await new Promise((r) => setTimeout(r, 400));
+        throw new Error('[CEK] menunggu slot lebih dari 20 menit');
+    } finally {
+        if (masukAntre) antre = Math.max(0, antre - 1);
     }
-    throw new Error('[CEK] menunggu slot lebih dari 20 menit');
 }
 
 function selesai(item, opts = {}) {
