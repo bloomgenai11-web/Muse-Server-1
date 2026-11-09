@@ -56,7 +56,7 @@ function ghHeaders(pat) {
 const SHIFTS_PER_PAT = parseInt(process.env.SHIFTS_PER_PAT || '24', 10);
 
 const MAX_COOKIES = parseInt(process.env.MAX_COOKIES || '10', 10);
-const MAX_PARALLEL = parseInt(process.env.MAX_PARALLEL || '4', 10);
+const MAX_PARALLEL = parseInt(process.env.MAX_PARALLEL || '6', 10);
 const PORT = 3001;
 const app = express();
 
@@ -390,7 +390,10 @@ app.post('/api/generate', async (req, res) => {
         }
         const activeUrl = urlMesinIni || await redis.get('active_gateway_url') || `http://localhost:${PORT}`;
         const batasTugas = parseInt(process.env.MUSE_TASK_TIMEOUT_MS || String(5 * 60 * 1000), 10);
-        const batasPada = Date.now() + batasTugas;
+        let sesi = null;
+        const sesiAmbil = await poolBrowser.takeNext(null);
+        sesi = sesiAmbil;
+        sesiDipakai = sesi;
         timerTugas = setTimeout(() => {
             if (job.status !== 'running') return;
             hidup.habis = true;
@@ -400,10 +403,6 @@ app.post('/api/generate', async (req, res) => {
             if (hidup.context) hidup.context.close().catch(() => {});
             if (hidup.browser) hidup.browser.close().catch(() => {});
         }, batasTugas);
-        let sesi = null;
-        const sesiAmbil = await poolBrowser.takeNext(batasPada);
-        sesi = sesiAmbil;
-        sesiDipakai = sesi;
         if (hidup.habis) throw new Error('TIMEOUT_5MENIT: tugas belum selesai dalam 5 menit');
         console.log(`[GATEWAY] tugas memakai ${sesi.id} — daftar sehat tersisa dicek ulang di [CEK]`);
         console.log(`[JEJAK] COOKIE job=${job.id} sesi=${jejakAman.sesi ?? '-'} jenis=${jejakAman.jenis || '-'} giliran=${jejakAman.giliran || '-'} cookie=${sesi.id}`);
