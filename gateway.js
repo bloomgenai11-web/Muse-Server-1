@@ -367,12 +367,30 @@ app.post('/api/generate', async (req, res) => {
     const hidup = { habis: false, browser: null, context: null };
     try {
         if (fileArray && fileArray.length > 0) {
-            fileArray.forEach((fileObj, index) => {
-                const matches = fileObj.base64 && fileObj.base64.match(/^data:(.+);base64,(.+)$/);
-                if (matches && matches.length === 3) {
-                    const buffer = Buffer.from(matches[2], 'base64');
-                    let originalExt = path.extname(fileObj.name || '');
-                    if (!originalExt) originalExt = '.bin';
+            for (let index = 0; index < fileArray.length; index++) {
+                const fileObj = fileArray[index];
+                let buffer = null;
+                let originalExt = path.extname(fileObj.name || '') || '.png';
+
+                if (fileObj.url && typeof fileObj.url === 'string' && fileObj.url.startsWith('http')) {
+                    try {
+                        const resp = await fetch(fileObj.url);
+                        if (!resp.ok) throw new Error('fetch ' + resp.status);
+                        const arr = await resp.arrayBuffer();
+                        buffer = Buffer.from(arr);
+                        console.log(`[JEJAK] URL sesi=${jejakAman.sesi ?? '-'} url=${fileObj.url} byte=${buffer.length}`);
+                    } catch (e) {
+                        console.error(`[JEJAK] GAGAL download URL: ${e.message}`);
+                        continue;
+                    }
+                } else if (fileObj.base64) {
+                    const matches = fileObj.base64.match(/^data:(.+);base64,(.+)$/);
+                    if (matches && matches.length === 3) {
+                        buffer = Buffer.from(matches[2], 'base64');
+                    }
+                }
+
+                if (buffer) {
                     const stem = path.basename(String(fileObj.name || ''), originalExt).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 140);
                     const safeName = `${stem || 'upload'}_${Date.now()}_${index}${originalExt}`;
                     const tempFilePath = path.join(folderTemp, safeName);
@@ -383,7 +401,7 @@ app.post('/api/generate', async (req, res) => {
                         `lampiran_nama=${fileObj.name || '-'} lampiran_disk=${safeName} byte=${buffer.length}`
                     );
                 }
-            });
+            }
         }
         if (!poolBrowser || typeof poolBrowser.takeNext !== 'function') {
             throw new Error('pemeriksa cookie belum siap');
